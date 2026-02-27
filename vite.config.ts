@@ -4,5 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), cloudflare(), tailwindcss()]
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error mode is a valid runtime option not yet typed
+  plugins: [react(), cloudflare({ mode: "local" }), tailwindcss()]
 });
