@@ -7,7 +7,8 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		AI: Ai;
-		CodeReviewAgent: DurableObjectNamespace<import("./src/server").CodeReviewAgent>;
+		DB: D1Database;
+		CodeReviewAgent: DurableObjectNamespace<import("./src/server").CodeReviewAgentV2>;
 		CF_ACCOUNT_ID: string;
 		CF_API_TOKEN: string;
 	}

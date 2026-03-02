@@ -365,10 +365,71 @@ After the score line, if a recurring anti-pattern was identified: **New Pattern:
   }
 }
 
+// ── Sessions API ───────────────────────────────────────────────────────
+
+async function handleSessions(
+  request: Request,
+  env: Env
+): Promise<Response | null> {
+  const url = new URL(request.url);
+  const { pathname } = url;
+
+  // Initialize table on every request (no-op after first run)
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'New Chat', created_at TEXT NOT NULL)").run();
+
+  // GET /api/sessions
+  if (request.method === "GET" && pathname === "/api/sessions") {
+    const { results } = await env.DB.prepare(
+      "SELECT id, title, created_at FROM sessions ORDER BY created_at DESC"
+    ).all<{ id: string; title: string; created_at: string }>();
+    return Response.json(results);
+  }
+
+  // POST /api/sessions
+  if (request.method === "POST" && pathname === "/api/sessions") {
+    const body = await request.json<{ id: string; title: string; created_at: string }>();
+    await env.DB.prepare(
+      "INSERT INTO sessions (id, title, created_at) VALUES (?, ?, ?)"
+    )
+      .bind(body.id, body.title ?? "New Chat", body.created_at)
+      .run();
+    return Response.json({ ok: true }, { status: 201 });
+  }
+
+  // PATCH /api/sessions/:id
+  const patchMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (request.method === "PATCH" && patchMatch) {
+    const id = patchMatch[1];
+    const body = await request.json<{ title: string }>();
+    await env.DB.prepare("UPDATE sessions SET title = ? WHERE id = ?")
+      .bind(body.title, id)
+      .run();
+    return Response.json({ ok: true });
+  }
+
+  // DELETE /api/sessions/:id
+  const deleteMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/);
+  if (request.method === "DELETE" && deleteMatch) {
+    const id = deleteMatch[1];
+    await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(id).run();
+    return Response.json({ ok: true });
+  }
+
+  return null;
+}
+
 // ── Worker entry ───────────────────────────────────────────────────────
+
+// SQLite-backed alias used by the v3 migration binding
+export { CodeReviewAgent as CodeReviewAgentV2 };
 
 export default {
   async fetch(request: Request, env: Env) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/sessions")) {
+      const res = await handleSessions(request, env);
+      if (res) return res;
+    }
     return (
       (await routeAgentRequest(request, env)) ||
       new Response("Not found", { status: 404 })

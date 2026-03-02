@@ -14,12 +14,12 @@
   },
   "assets": {
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/agents/*"]
+    "run_worker_first": ["/agents/*", "/api/*"]
   },
   "durable_objects": {
     "bindings": [
       {
-        "class_name": "CodeReviewAgent",
+        "class_name": "CodeReviewAgentV2",
         "name": "CodeReviewAgent"
       }
     ]
@@ -32,6 +32,17 @@
     {
       "renamed_classes": [{ "from": "ChatAgent", "to": "CodeReviewAgent" }],
       "tag": "v2"
+    },
+    {
+      "new_sqlite_classes": ["CodeReviewAgentV2"],
+      "tag": "v3"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "code-review-sessions",
+      "database_id": "88c43951-c093-4bd5-be8c-71e4ebfab1b6"
     }
   ],
   "observability": {

@@ -35,33 +35,43 @@ type Session = {
 
 // ── Session management ─────────────────────────────────────────────────
 
-const SESSIONS_KEY = "code-review-sessions";
-
-function loadSessions(): Session[] {
-  try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveSessions(sessions: Session[]) {
-  try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-  } catch {
-    console.warn(
-      "Failed to persist sessions (localStorage unavailable or full)"
-    );
-  }
-}
-
 function newSession(): Session {
   return {
     id: crypto.randomUUID(),
     title: "New Chat",
     createdAt: new Date().toISOString()
   };
+}
+
+async function apiLoadSessions(): Promise<Session[]> {
+  try {
+    const res = await fetch("/api/sessions");
+    if (!res.ok) return [];
+    const rows = await res.json<{ id: string; title: string; created_at: string }[]>();
+    return rows.map((r) => ({ id: r.id, title: r.title, createdAt: r.created_at }));
+  } catch {
+    return [];
+  }
+}
+
+async function apiCreateSession(session: Session): Promise<void> {
+  await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: session.id, title: session.title, created_at: session.createdAt })
+  });
+}
+
+async function apiRenameSession(id: string, title: string): Promise<void> {
+  await fetch(`/api/sessions/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title })
+  });
+}
+
+async function apiDeleteSession(id: string): Promise<void> {
+  await fetch(`/api/sessions/${id}`, { method: "DELETE" });
 }
 
 // ── Theme toggle ──────────────────────────────────────────────────────
@@ -687,26 +697,31 @@ function Chat({ sessionId, onFirstMessage }: ChatProps) {
 // ── Root ──────────────────────────────────────────────────────────────
 
 function Root() {
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    const stored = loadSessions();
-    if (stored.length === 0) {
-      const first = newSession();
-      saveSessions([first]);
-      return [first];
-    }
-    return stored;
-  });
-
-  const [activeId, setActiveId] = useState<string>(sessions[0].id);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Load sessions from D1 on mount
+  useEffect(() => {
+    apiLoadSessions().then((loaded) => {
+      if (loaded.length === 0) {
+        const first = newSession();
+        apiCreateSession(first).catch(console.error);
+        setSessions([first]);
+        setActiveId(first.id);
+      } else {
+        setSessions(loaded);
+        setActiveId(loaded[0].id);
+      }
+      setLoading(false);
+    });
+  }, []);
 
   const handleCreate = useCallback(() => {
     const session = newSession();
-    setSessions((prev) => {
-      const updated = [session, ...prev];
-      saveSessions(updated);
-      return updated;
-    });
+    apiCreateSession(session).catch(console.error);
+    setSessions((prev) => [session, ...prev]);
     setActiveId(session.id);
   }, []);
 
@@ -716,15 +731,15 @@ function Root() {
 
   const handleDelete = useCallback(
     (id: string) => {
+      apiDeleteSession(id).catch(console.error);
       setSessions((prev) => {
         const updated = prev.filter((s) => s.id !== id);
         if (updated.length === 0) {
           const fresh = newSession();
-          saveSessions([fresh]);
+          apiCreateSession(fresh).catch(console.error);
           setActiveId(fresh.id);
           return [fresh];
         }
-        saveSessions(updated);
         if (id === activeId) setActiveId(updated[0].id);
         return updated;
       });
@@ -734,16 +749,21 @@ function Root() {
 
   const handleFirstMessage = useCallback(
     (title: string) => {
-      setSessions((prev) => {
-        const updated = prev.map((s) =>
-          s.id === activeId ? { ...s, title } : s
-        );
-        saveSessions(updated);
-        return updated;
-      });
+      apiRenameSession(activeId, title).catch(console.error);
+      setSessions((prev) =>
+        prev.map((s) => (s.id === activeId ? { ...s, title } : s))
+      );
     },
     [activeId]
   );
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen text-kumo-inactive text-sm">
+        Loading sessions...
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-kumo-elevated">
