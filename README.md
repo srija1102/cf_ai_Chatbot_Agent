@@ -1,219 +1,123 @@
-# Agent Starter
+# Code Review AI
 
-![npm i agents command](./npm-agents-banner.svg)
+A production-grade AI code reviewer built on Cloudflare's developer platform. Paste any code snippet and get a structured review covering typos, security vulnerabilities, production readiness, and code quality — with memory that persists across sessions.
 
-<a href="https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agents-starter"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"/></a>
+**Live demo:** https://my-agent.srijaakula34.workers.dev
 
-A starter template for building AI chat agents on Cloudflare, powered by the [Agents SDK](https://developers.cloudflare.com/agents/).
+---
 
-Uses Workers AI (no API key required), with tools for weather, timezone detection, calculations with approval, and task scheduling.
+## What it does
 
-## Quick start
+The agent runs every submission through a **5-pass analysis framework**:
 
-```bash
-npx create-cloudflare@latest --template cloudflare/agents-starter
-cd agents-starter
-npm install
-npm run dev
-```
+| Pass | What it checks |
+|------|---------------|
+| 1 · Typo Detection | Misspelled identifiers, copy-paste errors, regex typos, off-by-ones |
+| 2 · Security (OWASP Top 10) | SQLi, XSS, broken auth, hardcoded secrets, SSRF, command injection, and more |
+| 3 · Typo → Vulnerability Chains | Traces how a typo can directly create or amplify a security issue |
+| 4 · Production Readiness | Auth middleware order, null safety, async correctness, error handling |
+| 5 · Code Quality | Dead code, naming, complexity, and positive observations |
 
-Open [http://localhost:5173](http://localhost:5173) to see your agent in action.
+Each review ends with a summary table and an **Overall Score / 10**.
 
-Try these prompts to see the different features:
+The agent also **remembers** your review history and recurring anti-patterns across sessions, so you can ask things like *"What's my average score?"* or *"What patterns keep appearing in my code?"*
 
-- **"What's the weather in Paris?"** — server-side tool (runs automatically)
-- **"What timezone am I in?"** — client-side tool (browser provides the answer)
-- **"Calculate 5000 \* 3"** — approval tool (asks you before running)
-- **"Remind me in 5 minutes to take a break"** — scheduling
+---
+
+## Tech stack
+
+| Layer | Technology |
+|-------|-----------|
+| LLM | Llama 3.3 70B (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`) via Workers AI |
+| Coordination | Cloudflare Durable Objects — one DO instance per chat session |
+| Memory / State | DO SQLite storage (review history, anti-patterns) + D1 database (session list) |
+| User Interface | React 19 + Tailwind CSS v4, served as static assets |
+| Real-time chat | WebSocket via the Cloudflare Agents SDK |
+| Runtime | Cloudflare Workers |
+| Build | Vite + `@cloudflare/vite-plugin` |
+
+---
+
+## Features
+
+- 5-pass structured review with severity levels — Critical / High / Medium / Low
+- Session sidebar — create, rename, and delete chat sessions persisted in D1
+- Review history — tracks scores, languages, typo counts, and vulnerability counts
+- Anti-pattern tracking — surfaces issues that keep recurring across all your reviews
+- Message editing — edit a past message to re-run the review from that point
+- Streaming responses with a stop button
+- Dark / light mode toggle
+- Starter prompts for quick testing
+
+---
 
 ## Project structure
 
 ```
-src/
-  server.ts    # Chat agent with tools and scheduling
-  app.tsx      # Chat UI built with Kumo components
-  client.tsx   # React entry point
-  styles.css   # Tailwind + Kumo styles
+my-agent/
+├── src/
+│   ├── server.ts       # Cloudflare Worker + Durable Object (CodeReviewAgent)
+│   ├── app.tsx         # React frontend — chat UI and session sidebar
+│   ├── client.tsx      # React entry point
+│   └── styles.css      # Tailwind CSS
+├── wrangler.jsonc      # Cloudflare Workers configuration
+├── vite.config.ts      # Vite build configuration
+├── env.d.ts            # TypeScript bindings for the Workers environment
+└── package.json
 ```
 
-## What's included
+---
 
-- **AI Chat** — Streaming responses powered by Workers AI via `AIChatAgent`
-- **Three tool patterns** — server-side auto-execute, client-side (browser), and human-in-the-loop approval
-- **Scheduling** — one-time, delayed, and recurring (cron) tasks
-- **Reasoning display** — shows model thinking as it streams, collapses when done
-- **Debug mode** — toggle in the header to inspect raw message JSON for each message
-- **Kumo UI** — Cloudflare's design system with dark/light mode
-- **Real-time** — WebSocket connection with automatic reconnection and message persistence
+## How the architecture works
 
-## Making it your own
-
-### Name your project
-
-Update the name in `package.json` and `wrangler.jsonc` — the `name` in `wrangler.jsonc` becomes your deployed Worker's URL (`<name>.<subdomain>.workers.dev`).
-
-### Change the system prompt
-
-Edit the `system` string in `server.ts` to give your agent a different personality or focus area. This is the most impactful single change you can make.
-
-### Replace the demo tools with real ones
-
-The starter ships with demo tools (`getWeather` returns random data, `calculate` does basic arithmetic). Replace them with real implementations:
-
-```ts
-// In server.ts, replace a demo tool with a real API call:
-getWeather: tool({
-  description: "Get the current weather for a city",
-  inputSchema: z.object({ city: z.string() }),
-  execute: async ({ city }) => {
-    const res = await fetch(`https://api.weather.example/${city}`);
-    return res.json();
-  }
-}),
+```
+Browser
+  │
+  ├── GET /                      →  Static assets (React app)
+  ├── GET /api/sessions          →  Worker  →  D1 (session list)
+  └── WS  /agents/CodeReviewAgent/:sessionId
+                │
+                └── Durable Object (one per session)
+                      ├── WebSocket handler
+                      ├── SQLite storage (review history, anti-patterns)
+                      └── Workers AI  →  Llama 3.3 70B (streaming)
 ```
 
-### Add your own tools
+Each chat session maps to its own Durable Object instance identified by a UUID. The DO holds the full message history and persists review statistics in SQLite. D1 stores only the session metadata (title, creation time) shown in the sidebar.
 
-Add new tools to the `tools` object in `server.ts`. There are three patterns:
+---
 
-```ts
-// Auto-execute: runs on the server, no user interaction
-myTool: tool({
-  description: "...",
-  inputSchema: z.object({ /* ... */ }),
-  execute: async (input) => { /* return result */ }
-}),
+## Local development
 
-// Client-side: no execute function, browser provides the result
-// Handle it in app.tsx via the onToolCall callback
-browserTool: tool({
-  description: "...",
-  inputSchema: z.object({ /* ... */ })
-}),
+### Prerequisites
 
-// Approval: add needsApproval to gate execution
-sensitiveTool: tool({
-  description: "...",
-  inputSchema: z.object({ /* ... */ }),
-  needsApproval: async (input) => true, // or conditional logic
-  execute: async (input) => { /* runs after approval */ }
-}),
-```
+- Node.js 18+
+- A [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works)
 
-### Customize scheduled task behavior
-
-When a scheduled task fires, `executeTask` runs on the server. It does its work and then uses `this.broadcast()` to notify connected clients (shown as a toast notification in the UI). Replace it with your own logic:
-
-```ts
-async executeTask(description: string, task: Schedule<string>) {
-  // Do the actual work
-  await sendEmail({ to: "user@example.com", subject: description });
-
-  // Notify connected clients
-  this.broadcast(
-    JSON.stringify({ type: "scheduled-task", description, timestamp: new Date().toISOString() })
-  );
-}
-```
-
-> **Why `broadcast()` instead of `saveMessages()`?** Injecting into chat history can cause the AI to see the notification as new context and re-trigger the same task in a loop. `broadcast()` sends a one-off event that the client displays separately from the conversation.
-
-### Remove scheduling
-
-If you don't need scheduling, remove `scheduleTask`, `getScheduledTasks`, and `cancelScheduledTask` from the tools object, the `executeTask` method, and the schedule-related imports (`getSchedulePrompt`, `scheduleSchema`, `Schedule`, `generateId`).
-
-### Add state beyond chat messages
-
-Use `this.setState()` and `this.state` for real-time state that syncs to all connected clients. See [Store and sync state](https://developers.cloudflare.com/agents/api-reference/store-and-sync-state/).
-
-### Add callable methods
-
-Expose agent methods as typed RPC that your client can call directly:
-
-```ts
-import { callable } from "agents";
-
-export class ChatAgent extends AIChatAgent<Env> {
-  @callable()
-  async getStats() {
-    return { messageCount: this.messages.length };
-  }
-}
-
-// Client-side:
-const stats = await agent.call("getStats");
-```
-
-See [Callable methods](https://developers.cloudflare.com/agents/api-reference/callable-methods/).
-
-### Connect to MCP servers
-
-Add external tools from MCP servers:
-
-```ts
-async onChatMessage(onFinish, options) {
-  // Connect to an MCP server
-  await this.mcp.connect("https://my-mcp-server.example/sse");
-
-  const result = streamText({
-    // ...
-    tools: {
-      ...myTools,
-      ...this.mcp.getAITools() // Include MCP tools
-    }
-  });
-}
-```
-
-See [MCP Client API](https://developers.cloudflare.com/agents/api-reference/mcp-client-api/).
-
-## Use a different AI model provider
-
-The starter uses [Workers AI](https://developers.cloudflare.com/workers-ai/) by default (no API key needed). To use a different provider:
-
-### OpenAI
+### Setup
 
 ```bash
-npm install @ai-sdk/openai
+# 1. Clone the repo
+git clone https://github.com/your-username/my-agent.git
+cd my-agent
+
+# 2. Install dependencies
+npm install
+
+# 3. Log in to Cloudflare
+npx wrangler login
+
+# 4. Create the D1 database (first time only)
+npx wrangler d1 create code-review-sessions
+# Copy the returned database_id into wrangler.jsonc under d1_databases
+
+# 5. Start the dev server
+npm run dev
 ```
 
-```ts
-// In server.ts, replace the model:
-import { openai } from "@ai-sdk/openai";
+Open [http://localhost:5173](http://localhost:5173).
 
-// Inside onChatMessage:
-const result = streamText({
-  model: openai("gpt-5.2")
-  // ...
-});
-```
-
-Create a `.env` file with your API key:
-
-```
-OPENAI_API_KEY=your-key-here
-```
-
-### Anthropic
-
-```bash
-npm install @ai-sdk/anthropic
-```
-
-```ts
-import { anthropic } from "@ai-sdk/anthropic";
-
-const result = streamText({
-  model: anthropic("claude-sonnet-4-20250514")
-  // ...
-});
-```
-
-Create a `.env` file with your API key:
-
-```
-ANTHROPIC_API_KEY=your-key-here
-```
+---
 
 ## Deploy
 
@@ -221,14 +125,69 @@ ANTHROPIC_API_KEY=your-key-here
 npm run deploy
 ```
 
-Your agent is live on Cloudflare's global network. Messages persist in SQLite, streams resume on disconnect, and the agent hibernates when idle.
+This builds the React frontend and deploys the Worker, Durable Objects, and static assets in one step.
 
-## Learn more
+Your app will be live at:
+```
+https://my-agent.<your-subdomain>.workers.dev
+```
 
-- [Agents SDK documentation](https://developers.cloudflare.com/agents/)
-- [Build a chat agent tutorial](https://developers.cloudflare.com/agents/getting-started/build-a-chat-agent/)
-- [Chat agents API reference](https://developers.cloudflare.com/agents/api-reference/chat-agents/)
-- [Workers AI models](https://developers.cloudflare.com/workers-ai/models/)
+---
+
+## Wrangler configuration highlights
+
+```jsonc
+// wrangler.jsonc
+{
+  // Workers AI binding — no API key needed
+  "ai": { "binding": "AI", "remote": true },
+
+  // Route /agents/* and /api/* to the Worker first
+  // (prevents the SPA fallback from intercepting API and WebSocket routes)
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/agents/*", "/api/*"]
+  },
+
+  // Durable Object — must use new_sqlite_classes for AIChatAgent
+  "durable_objects": {
+    "bindings": [{ "class_name": "CodeReviewAgentV2", "name": "CodeReviewAgent" }]
+  },
+
+  // D1 for session list
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "code-review-sessions",
+    "database_id": "<your-database-id>"
+  }]
+}
+```
+
+> **Note on `run_worker_first`:** Without this, Cloudflare's SPA fallback serves `index.html` for `/api/*` routes instead of routing them to your Worker. Always add any API or WebSocket path prefixes here.
+
+> **Note on `new_sqlite_classes`:** The `AIChatAgent` base class requires SQLite-backed Durable Objects. A class already deployed without SQLite cannot be converted — it must be created fresh under a new name.
+
+---
+
+## Example test cases
+
+| Code | Expected result |
+|------|----------------|
+| SQL query built with string interpolation | Critical — SQL injection |
+| `res.send(`Welcome ${req.body.username}`)` | Critical — reflected XSS |
+| `jwt.encode({}, "secret", algorithm="none")` | Critical — unsigned JWT |
+| `hashlib.md5(password)` | Critical — weak password hashing |
+| bcrypt + parameterized queries + env secrets | Score 8–10, all practices praised |
+
+---
+
+## Known limitations
+
+- Voice input is not supported — chat only
+- No authentication — anyone with the URL can use the app
+- Workers AI free tier rate limits apply under heavy usage
+
+---
 
 ## License
 
